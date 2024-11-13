@@ -26,7 +26,7 @@ const triggerRefetchAll = () => {
 
 export const ForcePublishAllActionComponent = ({path, render: Render, loading: Loading, ...others}) => {
     const componentRenderer = useContext(ComponentRendererContext);
-    const res = useNodeChecks({path}, {...others});
+    const res = useNodeChecks({path}, {...others, requiredPermission: ['publish','site-admin']});
     const client = useApolloClient();
     const [mutation, {called: mutationLoading}] = useMutation(ForcePublishAllMutation);
     if (res.loading) {
