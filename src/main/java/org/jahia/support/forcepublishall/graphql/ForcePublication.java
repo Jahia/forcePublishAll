@@ -79,13 +79,16 @@ public final class ForcePublication {
                 final JobDetail jobDetail = BackgroundJob.createJahiaJob("Publication", PublicationJob.class);
                 final JobDataMap jobDataMap = jobDetail.getJobDataMap();
                 JCRTemplate.getInstance().doExecuteWithSystemSessionAsUser(null, Constants.LIVE_WORKSPACE, null, sessionWrapper -> {
+                    try{
                     final JCRNodeWrapper node = sessionWrapper.getNodeByUUID(uuid);
-                    if (node == null) {
-                        throw new JahiaRuntimeException("Node not found");
+                    if (node != null) {
+                        node.remove();
+                        sessionWrapper.save();
+                        logger.info("Deleted node with UUID: {}, path {} in live workspace", uuid, path);
                     }
-                    node.remove();
-                    sessionWrapper.save();
-                    logger.info("Deleted node with UUID: {}, path {} in live workspace", uuid, path);
+                    }catch(RepositoryException ex){
+                        // ignore silently the exception
+                    }
                     return null;
                 });
                 final Collection<ComplexPublicationService.FullPublicationInfo> fullPublicationInfos = complexPublicationService.getFullPublicationInfos(Collections.singletonList(uuid), activeLiveLanguagesSet, true, session);
@@ -99,6 +102,7 @@ public final class ForcePublication {
                 logger.info("Scheduling publication job for node with UUID: {}, path {}, will publish {} nodes in {} languages", uuid, path, allUuids.size(), activeLiveLanguagesSet.size());
                 schedulerService.scheduleJobNow(jobDetail);
             } catch (RepositoryException | SchedulerException e) {
+                logger.error(PERMISSION_PUBLISH);
                 throw new JahiaRuntimeException(e);
             }
 
