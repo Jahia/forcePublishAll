@@ -4,6 +4,12 @@ import graphql.annotations.annotationTypes.GraphQLDescription;
 import graphql.annotations.annotationTypes.GraphQLField;
 import graphql.annotations.annotationTypes.GraphQLName;
 import graphql.annotations.annotationTypes.GraphQLTypeExtension;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import javax.jcr.RepositoryException;
 import org.jahia.api.Constants;
 import org.jahia.exceptions.JahiaRuntimeException;
 import org.jahia.modules.graphql.provider.dxm.node.GqlJcrNode;
@@ -18,27 +24,22 @@ import org.quartz.JobDataMap;
 import org.quartz.JobDetail;
 import org.quartz.SchedulerException;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import javax.jcr.RepositoryException;
-import java.util.*;
-
-/**
- * Admin mutation class for Augmented Search
- */
 @GraphQLTypeExtension(GqlJcrNodeMutation.class)
 public final class ForcePublication {
+
     private GqlJcrNodeMutation nodeMutation;
-    private transient Logger logger = org.slf4j.LoggerFactory.getLogger(ForcePublication.class);
+    private static final Logger logger = LoggerFactory.getLogger(ForcePublication.class);
 
     protected void validateNodeWorkspace(GqlJcrNode node) {
-        JCRSessionWrapper session;
         try {
-            session = node.getNode().getSession();
+            final JCRSessionWrapper session = node.getNode().getSession();
+            if (!session.getWorkspace().getName().equals(Constants.EDIT_WORKSPACE)) {
+                throw new GqlJcrWrongInputException("Publication fields can only be used with nodes from " + NodeQueryExtensions.Workspace.EDIT + " workspace");
+            }
         } catch (RepositoryException e) {
             throw new JahiaRuntimeException(e);
-        }
-        if (!session.getWorkspace().getName().equals(Constants.EDIT_WORKSPACE)) {
-            throw new GqlJcrWrongInputException("Publication fields can only be used with nodes from " + NodeQueryExtensions.Workspace.EDIT + " workspace");
         }
     }
 
@@ -62,65 +63,61 @@ public final class ForcePublication {
     @GraphQLName("forcePublish")
     @GraphQLDescription("Force the publication of the whole sub-tree by first deleting everything in live and then republishing the whole sub-tree")
     public Boolean forcePublish() throws RepositoryException {
-        ComplexPublicationService complexPublicationService = BundleUtils.getOsgiService(ComplexPublicationService.class, null);
-        SchedulerService schedulerService = BundleUtils.getOsgiService(SchedulerService.class, null);
-        String uuid;
-        String path;
-        JCRSessionWrapper session;
-        Set<String> activeLiveLanguagesSet;
+        final ComplexPublicationService complexPublicationService = BundleUtils.getOsgiService(ComplexPublicationService.class, null);
+        final SchedulerService schedulerService = BundleUtils.getOsgiService(SchedulerService.class, null);
+
         try {
-            JCRNodeWrapper nodeToPublish = nodeMutation.getNode().getNode();
-            uuid = nodeToPublish.getIdentifier();
-            path = nodeToPublish.getPath();
-            activeLiveLanguagesSet = nodeToPublish.getResolveSite().getActiveLiveLanguages();
-            session = JCRSessionFactory.getInstance().getCurrentUserSession();
-        } catch (RepositoryException e) {
-            throw new JahiaRuntimeException(e);
-        }
-        logger.info("Force publication of node with UUID: {}, path {}", uuid, path);
-        JobDetail jobDetail = BackgroundJob.createJahiaJob("Publication", PublicationJob.class);
-        JobDataMap jobDataMap = jobDetail.getJobDataMap();
-        JCRTemplate.getInstance().doExecuteWithSystemSessionAsUser(null, Constants.LIVE_WORKSPACE, null, sessionWrapper -> {
-            JCRNodeWrapper node = sessionWrapper.getNodeByUUID(uuid);
-            if (node == null) {
-                throw new JahiaRuntimeException("Node not found");
-            }
-            node.remove();
-            sessionWrapper.save();
-            logger.info("Deleted node with UUID: {}, path {} in live workspace", uuid, path);
-            return null;
-        });
-        Collection<ComplexPublicationService.FullPublicationInfo> fullPublicationInfos = complexPublicationService.getFullPublicationInfos(Collections.singletonList(uuid), activeLiveLanguagesSet, true, session);
-        List<String> allUuids = getAllUuids(fullPublicationInfos);
-        jobDataMap.put(PublicationJob.PUBLICATION_UUIDS, allUuids);
-        jobDataMap.put(PublicationJob.PUBLICATION_PATHS, Collections.singletonList(path));
-        jobDataMap.put(PublicationJob.SOURCE, Constants.EDIT_WORKSPACE);
-        jobDataMap.put(PublicationJob.DESTINATION, Constants.LIVE_WORKSPACE);
-        jobDataMap.put(PublicationJob.CHECK_PERMISSIONS, true);
-        try {
+            final JCRNodeWrapper nodeToPublish = nodeMutation.getNode().getNode();
+            final String uuid = nodeToPublish.getIdentifier();
+            final String path = nodeToPublish.getPath();
+            final Set<String> activeLiveLanguagesSet = nodeToPublish.getResolveSite().getActiveLiveLanguages();
+            final JCRSessionWrapper session = JCRSessionFactory.getInstance().getCurrentUserSession();
+
+            logger.info("Force publication of node with UUID: {}, path {}", uuid, path);
+            final JobDetail jobDetail = BackgroundJob.createJahiaJob("Publication", PublicationJob.class);
+            final JobDataMap jobDataMap = jobDetail.getJobDataMap();
+            JCRTemplate.getInstance().doExecuteWithSystemSessionAsUser(null, Constants.LIVE_WORKSPACE, null, sessionWrapper -> {
+                final JCRNodeWrapper node = sessionWrapper.getNodeByUUID(uuid);
+                if (node == null) {
+                    throw new JahiaRuntimeException("Node not found");
+                }
+                node.remove();
+                sessionWrapper.save();
+                logger.info("Deleted node with UUID: {}, path {} in live workspace", uuid, path);
+                return null;
+            });
+            final Collection<ComplexPublicationService.FullPublicationInfo> fullPublicationInfos = complexPublicationService.getFullPublicationInfos(Collections.singletonList(uuid), activeLiveLanguagesSet, true, session);
+            final List<String> allUuids = getAllUuids(fullPublicationInfos);
+            jobDataMap.put(PublicationJob.PUBLICATION_UUIDS, allUuids);
+            jobDataMap.put(PublicationJob.PUBLICATION_PATHS, Collections.singletonList(path));
+            jobDataMap.put(PublicationJob.SOURCE, Constants.EDIT_WORKSPACE);
+            jobDataMap.put(PublicationJob.DESTINATION, Constants.LIVE_WORKSPACE);
+            jobDataMap.put(PublicationJob.CHECK_PERMISSIONS, true);
+
             logger.info("Scheduling publication job for node with UUID: {}, path {}, will publish {} nodes in {} languages", uuid, path, allUuids.size(), activeLiveLanguagesSet.size());
             schedulerService.scheduleJobNow(jobDetail);
-        } catch (SchedulerException e) {
+        } catch (RepositoryException | SchedulerException e) {
             throw new JahiaRuntimeException(e);
         }
+
         return true;
     }
 
     private static List<String> getAllUuids(Collection<ComplexPublicationService.FullPublicationInfo> fullPublicationInfo) {
-        List<String> l = new ArrayList<String>();
+        final List<String> uuids = new ArrayList<>();
         for (ComplexPublicationService.FullPublicationInfo info : fullPublicationInfo) {
             if (info.getPublicationStatus() != PublicationInfo.DELETED) {
                 if (info.getNodeIdentifier() != null) {
-                    l.add(info.getNodeIdentifier());
+                    uuids.add(info.getNodeIdentifier());
                 }
                 if (info.getTranslationNodeIdentifier() != null) {
-                    l.add(info.getTranslationNodeIdentifier());
+                    uuids.add(info.getTranslationNodeIdentifier());
                 }
                 if (info.getDeletedTranslationNodeIdentifiers() != null) {
-                    l.addAll(info.getDeletedTranslationNodeIdentifiers());
+                    uuids.addAll(info.getDeletedTranslationNodeIdentifiers());
                 }
             }
         }
-        return l;
+        return uuids;
     }
 }
