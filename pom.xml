@@ -11,7 +11,7 @@
     <name>Force publish alll</name>
     <version>1.1.0-SNAPSHOT</version>
     <packaging>bundle</packaging>
-    <description>This is a module allowing to force the publication of any content.</description>
+    <description>This module provides a GraphQL mutation to force the publication of a whole subtree in Jahia by first deleting everything in the live workspace and then republishing the entire subtree.</description>
 
     <properties>
         <jahia.plugin.version>6.10</jahia.plugin.version>
